@@ -207,12 +207,32 @@ class Agent:
         return self._step_toward(observation, goal)
 
     def _step_archer(self, observation: SkirmishObservation, goal: AxialPosition) -> int:
-        """Retreat as far as possible while keeping the enemy within attack range."""
+        """Hold a safe firing line behind footmen when possible, otherwise keep range and support."""
         here = me.position(observation)
         attack_range = units.STATS["archer"].attack_range
         current_distance = tile.distance(here, goal)
-        candidates = []
 
+        if self._abilities_enabled(observation):
+            protected = [ally for ally in visible.allies(observation) if ally["type"] == "footman"]
+            if protected:
+                best = None
+                for path_id in action.legal_paths(observation):
+                    if not path_id:
+                        continue
+                    landing = tile.at_path_end(here, path_id)
+                    if any(tile.distance(landing, ally["position"]) == 1 for ally in protected):
+                        score = (
+                            tile.distance(landing, goal),
+                            -len(paths.decode(path_id)),
+                            self._terrain_penalty(observation, landing),
+                            path_id,
+                        )
+                        if best is None or score < best[0]:
+                            best = (score, path_id)
+                if best is not None:
+                    return best[1]
+
+        candidates = []
         for path_id in action.legal_paths(observation):
             landing = tile.at_path_end(here, path_id)
             distance = tile.distance(landing, goal)
@@ -229,7 +249,7 @@ class Agent:
         if candidates:
             return max(candidates)[-1]
 
-        # If the enemy is still outside the archer's range, close the gap first.
+        # If the enemy is still outside the archer's range, hold formation and keep the line.
         if current_distance > attack_range:
             return self._step_toward(observation, goal)
         return 0
