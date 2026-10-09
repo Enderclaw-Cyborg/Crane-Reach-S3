@@ -19,6 +19,23 @@ class Agent:
         # precomputation outside the decision clock. This starter stores no state.
         pass
 
+    def _abilities_enabled(self, observation: SkirmishObservation) -> bool:
+        """Return whether the active season has enabled cavalry charges and shield walls."""
+        return bool(observation["observation"]["parameters"].get("unit_abilities", 0))
+
+    def _can_charge(self, observation: SkirmishObservation, start: AxialPosition, path_id: int) -> bool:
+        """Return whether a legal path ends far enough away to trigger the cavalry charge bonus."""
+        if not self._abilities_enabled(observation) or path_id == 0:
+            return False
+        landing = tile.at_path_end(start, path_id)
+        return tile.distance(start, landing) >= 3
+
+    def _shield_wall_ready(self, observation: SkirmishObservation, here: AxialPosition, ally: AxialPosition) -> bool:
+        """Return whether a footman standing here would be adjacent to an allied footman."""
+        if not self._abilities_enabled(observation):
+            return False
+        return tile.distance(here, ally) == 1
+
     def act(self, observation: SkirmishObservation) -> SkirmishAction:
         # The enemies this unit can see.
         enemies = visible.enemies(observation)
@@ -65,6 +82,10 @@ class Agent:
         unit_type = me.unit_type(observation)
         if unit_type == "archer":
             step = self._step_archer(observation, nearest["position"])
+        elif unit_type == "cavalry":
+            step = self._step_cavalry(observation, nearest["position"])
+        elif unit_type == "footman":
+            step = self._step_footman(observation, nearest["position"])
         else:
             step = self._step_toward(observation, nearest["position"])
 
@@ -141,6 +162,49 @@ class Agent:
 
         # A water seam may require moving away from the enemy before reaching a passage.
         return best_step if best_step else detour
+
+    def _step_footman(self, observation: SkirmishObservation, goal: AxialPosition) -> int:
+        """Prefer adjacent ally coverage when the shield wall is active, otherwise follow the usual approach."""
+        here = me.position(observation)
+        if self._abilities_enabled(observation):
+            shield_paths: list[tuple[int, int]] = []
+            for path_id in action.legal_paths(observation):
+                if not path_id:
+                    continue
+                landing = tile.at_path_end(here, path_id)
+                if any(
+                    self._shield_wall_ready(observation, landing, ally["position"])
+                    and ally["type"] == "footman"
+                    for ally in visible.allies(observation)
+                ):
+                    shield_paths.append((tile.distance(landing, goal), path_id))
+            if shield_paths:
+                return min(shield_paths)[1]
+        return self._step_toward(observation, goal)
+
+    def _step_cavalry(self, observation: SkirmishObservation, goal: AxialPosition) -> int:
+        """Choose a legal path that reaches a charge, and otherwise keep pressing the enemy."""
+        here = me.position(observation)
+        if self._abilities_enabled(observation):
+            charge_paths: list[tuple[tuple[int, int, int], int]] = []
+            for path_id in action.legal_paths(observation):
+                if not path_id:
+                    continue
+                landing = tile.at_path_end(here, path_id)
+                if self._can_charge(observation, here, path_id):
+                    charge_paths.append(
+                        (
+                            (
+                                tile.distance(landing, goal),
+                                -len(paths.decode(path_id)),
+                                self._terrain_penalty(observation, landing),
+                            ),
+                            path_id,
+                        )
+                    )
+            if charge_paths:
+                return min(charge_paths)[1]
+        return self._step_toward(observation, goal)
 
     def _step_archer(self, observation: SkirmishObservation, goal: AxialPosition) -> int:
         """Retreat as far as possible while keeping the enemy within attack range."""
