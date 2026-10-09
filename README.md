@@ -1,5 +1,5 @@
 ## AI use and plan
-Used AI to correct issues while attempting to run last season's agents as this and fixed an issue where the swords wouldn't cross around the middle river.
+Updated for season 3. swords should protect the archers and cavalry should charge the enemy.
 
 # Skirmish at Crane Reach agent
 
